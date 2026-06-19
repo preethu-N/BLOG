@@ -9,17 +9,21 @@ import CreatePost from './components/CreatePost';
 import { posts as staticPosts } from './data/Post';
 
 function App() {
+  // Store whether the user is logged in
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  
+  // Store posts created by the user
   const [customPosts, setCustomPosts] = useState([]);
 
+  // Check login state and load posts when the application loads
   useEffect(() => {
-    // Check logged in state
+    // Check if user has logged in before
     const userLoggedIn = localStorage.getItem('isLoggedIn');
     if (userLoggedIn === 'true') {
       setIsLoggedIn(true);
     }
 
-    // Load custom posts from localStorage
+    // Load any custom posts that the user wrote
     const savedCustom = localStorage.getItem('customPosts');
     if (savedCustom) {
       try {
@@ -30,45 +34,101 @@ function App() {
     }
   }, []);
 
-  const handleLogin = () => {
+  // Function to log in the user
+  const handleLogin = (username) => {
     localStorage.setItem('isLoggedIn', 'true');
+    if (username) {
+      localStorage.setItem('username', username);
+    }
     setIsLoggedIn(true);
   };
 
+  // Function to log out the user
   const handleLogout = () => {
     localStorage.removeItem('isLoggedIn');
+    localStorage.removeItem('username');
+    localStorage.removeItem('access');
+    localStorage.removeItem('refresh');
     setIsLoggedIn(false);
   };
 
+  // Merge static posts from file and custom posts from localStorage
   const allPosts = [...staticPosts, ...customPosts];
 
+  // Function to create a new post
   const handleCreatePost = (newPost) => {
-    const nextId = allPosts.length > 0 ? Math.max(...allPosts.map(p => p.id)) + 1 : 1;
+    // Loop to find the maximum ID and add 1
+    let maxId = 0;
+    for (let i = 0; i < allPosts.length; i++) {
+      if (allPosts[i].id > maxId) {
+        maxId = allPosts[i].id;
+      }
+    }
+    const nextId = maxId + 1;
+
+    // Build the new post object
     const postWithId = {
-      ...newPost,
       id: nextId,
+      title: newPost.title,
+      desc: newPost.desc,
+      content: newPost.content,
+      category: newPost.category,
+      image: newPost.image || "/images/not.png",
+      author: newPost.author,
+      date: newPost.date,
+      readTime: newPost.readTime,
       featured: false
     };
+
     const updatedCustom = [...customPosts, postWithId];
     setCustomPosts(updatedCustom);
     localStorage.setItem('customPosts', JSON.stringify(updatedCustom));
   };
 
+  // Function to edit an existing post
   const handleEditPost = (id, updatedPost) => {
-    const updatedCustom = customPosts.map(p => p.id === Number(id) ? { ...p, ...updatedPost } : p);
+    const updatedCustom = [];
+    
+    // Loop and find the post to update
+    for (let i = 0; i < customPosts.length; i++) {
+      const currentPost = customPosts[i];
+      if (currentPost.id === Number(id)) {
+        // Replace it with updated data
+        const merged = {
+          ...currentPost,
+          ...updatedPost
+        };
+        updatedCustom.push(merged);
+      } else {
+        updatedCustom.push(currentPost);
+      }
+    }
+    
     setCustomPosts(updatedCustom);
     localStorage.setItem('customPosts', JSON.stringify(updatedCustom));
   };
 
+  // Function to delete a post
   const handleDeletePost = (id) => {
-    const updatedCustom = customPosts.filter(p => p.id !== Number(id));
+    const updatedCustom = [];
+    
+    // Loop and add all posts EXCEPT the one we want to delete
+    for (let i = 0; i < customPosts.length; i++) {
+      if (customPosts[i].id !== Number(id)) {
+        updatedCustom.push(customPosts[i]);
+      }
+    }
+    
     setCustomPosts(updatedCustom);
     localStorage.setItem('customPosts', JSON.stringify(updatedCustom));
   };
 
   return (
     <BrowserRouter>
+      {/* Navigation Bar */}
       <Navbar isLoggedIn={isLoggedIn} handleLogout={handleLogout} />
+      
+      {/* Route Views */}
       <Routes>
         <Route path="/" element={<Home isLoggedIn={isLoggedIn} posts={allPosts} />} />
         <Route path="/home" element={<Home isLoggedIn={isLoggedIn} posts={allPosts} />} />

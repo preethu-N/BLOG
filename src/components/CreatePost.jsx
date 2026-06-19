@@ -1,12 +1,12 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
 import { Eye, EyeOff, ChevronLeft, Plus, X } from 'lucide-react';
 
 const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
   const navigate = useNavigate();
-  const { id } = useParams();
+  const { id } = useParams(); // Get the post ID from URL if editing
 
-  // Form states
+  // Form input states
   const [title, setTitle] = useState('');
   const [excerpt, setExcerpt] = useState('');
   const [content, setContent] = useState('');
@@ -14,45 +14,87 @@ const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
   const [tags, setTags] = useState([]);
   const [currentTag, setCurrentTag] = useState('');
 
-  // Mode state
+  // Page mode state (whether we are previewing the post)
   const [isPreviewMode, setIsPreviewMode] = useState(false);
 
-  // Populate data on edit mode
+  // If we have an ID in the URL, it means we are editing an existing post.
+  // Load the post data when the page loads.
   useEffect(() => {
-    if (id && posts.length > 0) {
-      const existingPost = posts.find((p) => p.id === Number(id));
+    if (id) {
+      // First try to find in posts prop if passed, otherwise fetch from backend
+      let existingPost = null;
+      if (posts.length > 0) {
+        for (let i = 0; i < posts.length; i++) {
+          if (posts[i].id === Number(id)) {
+            existingPost = posts[i];
+            break;
+          }
+        }
+      }
+
       if (existingPost) {
         setTitle(existingPost.title || '');
         setExcerpt(existingPost.desc || '');
         setContent(existingPost.content || '');
         setCoverImageDesc(existingPost.coverImageDesc || '');
         setTags(existingPost.tags || (existingPost.category ? [existingPost.category] : []));
+      } else {
+        // Fetch from backend
+        fetch(`http://127.0.0.1:8000/api/post/posts/${id}/`)
+          .then((res) => {
+            if (res.ok) return res.json();
+            throw new Error("Failed to load post");
+          })
+          .then((data) => {
+            setTitle(data.title || '');
+            setContent(data.content || '');
+            setTags(data.category ? [data.category] : []);
+          })
+          .catch((err) => console.log(err));
       }
     }
   }, [id, posts]);
 
-  // Computations
-  const wordCount = useMemo(() => {
-    if (!content) return 0;
-    return content.trim().split(/\s+/).filter(w => w.length > 0).length;
-  }, [content]);
+  // --- Calculations for Word Count and Reading Time ---
+  let wordCount = 0;
+  if (content && content.trim() !== "") {
+    const wordsArray = content.trim().split(" ");
+    // Remove empty spaces from the array
+    const cleanWords = wordsArray.filter(function (word) {
+      return word !== "";
+    });
+    wordCount = cleanWords.length;
+  }
 
-  const readTime = useMemo(() => {
-    return Math.max(1, Math.ceil(wordCount / 200));
-  }, [wordCount]);
+  // Assume average reading speed of 200 words per minute
+  const readTime = Math.max(1, Math.ceil(wordCount / 200));
 
-  // Tag Handlers
+  // --- Tag Management ---
   const handleAddTag = (e) => {
     e.preventDefault();
-    const trimmed = currentTag.trim();
-    if (trimmed && tags.length < 5 && !tags.includes(trimmed)) {
-      setTags([...tags, trimmed]);
-      setCurrentTag('');
+    const trimmedTag = currentTag.trim();
+
+    // Tag validation: not empty, max 5 tags, no duplicates
+    if (trimmedTag === "") {
+      return;
     }
+    if (tags.length >= 5) {
+      return;
+    }
+    if (tags.includes(trimmedTag)) {
+      return;
+    }
+
+    setTags([...tags, trimmedTag]);
+    setCurrentTag('');
   };
 
   const handleRemoveTag = (tagToRemove) => {
-    setTags(tags.filter(t => t !== tagToRemove));
+    // Keep all tags except the one we want to remove
+    const newTags = tags.filter(function (tag) {
+      return tag !== tagToRemove;
+    });
+    setTags(newTags);
   };
 
   const handleKeyPress = (e) => {
@@ -62,130 +104,173 @@ const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
     }
   };
 
-  // Publish/Edit handler
-  const handlePublish = () => {
-    if (!title.trim() || !content.trim()) return;
+  // --- Publish or Save Changes ---
+  const handlePublish = async () => {
+    if (title.trim() === "" || content.trim() === "") {
+      alert("Title and Content are required");
+      return;
+    }
 
-    if (id) {
-      const updatedPost = {
-        title,
-        desc: excerpt.trim() || (content.length > 100 ? content.substring(0, 97) + "..." : content),
-        content,
-        category: tags.length > 0 ? tags[0] : "General",
-        coverImageDesc,
-        tags,
-        readTime: `${readTime} min read`
-      };
-      if (handleEditPost) {
-        handleEditPost(id, updatedPost);
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      alert("Please login first");
+      navigate("/sign");
+      return;
+    }
+
+    try {
+      const url = id
+        ? `http://127.0.0.1:8000/api/post/posts/${id}/`
+        : "http://127.0.0.1:8000/api/post/posts/";
+      const method = id ? "PUT" : "POST";
+
+      const response = await fetch(url, {
+        method: method,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: title,
+          content: content,
+          category: tags.length > 0 ? tags[0] : "General",
+          image: "",
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        if (id) {
+          if (handleEditPost) {
+            handleEditPost(id, data);
+          }
+          alert("Post Saved Successfully");
+          navigate(`/post/${id}`);
+        } else {
+          if (handleCreatePost) {
+            handleCreatePost(data);
+          }
+          alert("Post Created Successfully");
+          navigate("/");
+        }
+      } else {
+        console.log(data);
+        alert(id ? "Failed to save post" : "Failed to create post");
       }
-      navigate(`/post/${id}`);
-    } else {
-      // Use current date
-      const options = { year: 'numeric', month: 'long', day: 'numeric' };
-      const today = new Date().toLocaleDateString('en-US', options);
-
-      const newPost = {
-        title,
-        desc: excerpt.trim() || (content.length > 100 ? content.substring(0, 97) + "..." : content),
-        content,
-        category: tags.length > 0 ? tags[0] : "General",
-        image: "/images/not.png", // static default image
-        author: "Alex Morgan", // current demo user
-        date: today,
-        readTime: `${readTime} min read`,
-        coverImageDesc,
-        tags
-      };
-
-      if (handleCreatePost) {
-        handleCreatePost(newPost);
-      }
-      navigate('/');
+    } catch (error) {
+      console.log(error);
+      alert("Server Error");
     }
   };
 
-  // Custom basic markdown parser
+  // --- Simple Custom Markdown Parser ---
   const renderMarkdown = (text) => {
     if (!text || text.trim() === '') {
       return <p className="text-gray-400 italic">Your content will appear here</p>;
     }
-    return text.split('\n').map((line, index) => {
-      // Headers
-      if (line.startsWith('## ')) {
-        return (
-          <h2 key={index} className="text-2xl font-bold text-gray-900 mt-6 mb-3">
-            {line.replace('## ', '')}
+
+    const lines = text.split('\n');
+    const renderedElements = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // 1. Heading 2 (## Heading)
+      if (line.indexOf('## ') === 0) {
+        const headingText = line.substring(3);
+        renderedElements.push(
+          <h2 key={i} className="text-2xl font-bold text-gray-900 mt-6 mb-3">
+            {headingText}
           </h2>
         );
+        continue;
       }
-      if (line.startsWith('### ')) {
-        return (
-          <h3 key={index} className="text-xl font-bold text-gray-800 mt-4 mb-2">
-            {line.replace('### ', '')}
+
+      // 2. Heading 3 (### Heading)
+      if (line.indexOf('### ') === 0) {
+        const headingText = line.substring(4);
+        renderedElements.push(
+          <h3 key={i} className="text-xl font-bold text-gray-800 mt-4 mb-2">
+            {headingText}
           </h3>
         );
+        continue;
       }
-      // Bullets
-      if (line.startsWith('- ')) {
-        return (
-          <li key={index} className="list-disc ml-6 text-gray-700 mb-1">
-            {line.replace('- ', '')}
+
+      // 3. Bullet list item (- Item)
+      if (line.indexOf('- ') === 0) {
+        const bulletText = line.substring(2);
+        renderedElements.push(
+          <li key={i} className="list-disc ml-6 text-gray-700 mb-1">
+            {bulletText}
           </li>
         );
+        continue;
       }
-      // Empty lines
+
+      // 4. Empty line spacing
       if (line.trim() === '') {
-        return <div key={index} className="h-3"></div>;
+        renderedElements.push(<div key={i} className="h-3"></div>);
+        continue;
       }
 
-      // Inline Bold formatting
-      const boldRegex = /\*\*(.*?)\*\*/g;
-      const parts = [];
-      let lastIndex = 0;
-      let match;
-      while ((match = boldRegex.exec(line)) !== null) {
-        if (match.index > lastIndex) {
-          parts.push(line.substring(lastIndex, match.index));
+      // 5. Bold text parsing (**text**)
+      if (line.indexOf('**') !== -1) {
+        const parts = line.split('**');
+        const paragraphParts = [];
+        for (let j = 0; j < parts.length; j++) {
+          if (j % 2 === 1) {
+            // Odd numbers are inside the bold symbols
+            paragraphParts.push(
+              <strong key={j} className="font-extrabold text-gray-950">
+                {parts[j]}
+              </strong>
+            );
+          } else {
+            paragraphParts.push(parts[j]);
+          }
         }
-        parts.push(
-          <strong key={match.index} className="font-extrabold text-gray-955">
-            {match[1]}
-          </strong>
+        renderedElements.push(
+          <p key={i} className="text-gray-700 leading-relaxed mb-3">
+            {paragraphParts}
+          </p>
         );
-        lastIndex = boldRegex.lastIndex;
-      }
-      if (lastIndex < line.length) {
-        parts.push(line.substring(lastIndex));
+        continue;
       }
 
-      return (
-        <p key={index} className="text-gray-700 leading-relaxed mb-3">
-          {parts.length > 0 ? parts : line}
+      // 6. Regular text line
+      renderedElements.push(
+        <p key={i} className="text-gray-700 leading-relaxed mb-3">
+          {line}
         </p>
       );
-    });
+    }
+
+    return renderedElements;
   };
 
+  // Check if form is valid (Title and Content are required)
   const isFormValid = title.trim() !== '' && content.trim() !== '';
 
   return (
     <div className="bg-white min-h-screen py-10">
       <div className="max-w-3xl mx-auto px-6">
-        
-        {/* Top Header Actions */}
-        <header className="flex items-center justify-between border-b pb-6 mb-8">
-          <div className="flex items-center gap-3">
+
+        {/* Top Header Section */}
+        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-6 mb-8">
+          <div className="flex items-center justify-between sm:justify-start gap-3 w-full sm:w-auto">
             <Link
               to={id ? `/post/${id}` : "/"}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition font-medium"
             >
               <ChevronLeft className="w-4 h-4" /> Back
             </Link>
-            <h1 className="text-2xl font-bold text-gray-900">{id ? 'Edit Post' : 'New Post'}</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{id ? 'Edit Post' : 'New Post'}</h1>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center justify-end sm:justify-start gap-3 w-full sm:w-auto">
             {isPreviewMode ? (
               <button
                 onClick={() => setIsPreviewMode(false)}
@@ -201,15 +286,14 @@ const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
                 <Eye className="w-4 h-4 mr-2" /> Preview
               </button>
             )}
-            
+
             <button
               onClick={handlePublish}
               disabled={!isFormValid}
-              className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-semibold text-white shadow-sm transition cursor-pointer ${
-                isFormValid 
-                  ? 'bg-violet-600 hover:bg-violet-700' 
+              className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-semibold text-white shadow-sm transition cursor-pointer ${isFormValid
+                  ? 'bg-violet-600 hover:bg-violet-700'
                   : 'bg-indigo-300 cursor-not-allowed'
-              }`}
+                }`}
             >
               {id ? 'Save' : 'Publish'}
             </button>
@@ -219,8 +303,8 @@ const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
         {/* --- EDIT MODE --- */}
         {!isPreviewMode && (
           <div className="space-y-6">
-            
-            {/* Title */}
+
+            {/* Title Input */}
             <div>
               <label htmlFor="post-title" className="block text-sm font-bold text-gray-800 mb-2">
                 Title <span className="text-red-500">*</span>
@@ -235,7 +319,7 @@ const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
               />
             </div>
 
-            {/* Excerpt */}
+            {/* Excerpt Input */}
             <div>
               <label htmlFor="post-excerpt" className="block text-sm font-bold text-gray-800 mb-2">
                 Excerpt <span className="text-gray-400 font-normal">(optional — auto-generated if empty)</span>
@@ -254,7 +338,7 @@ const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
               </div>
             </div>
 
-            {/* Content */}
+            {/* Content Input */}
             <div>
               <div className="flex justify-between items-center mb-2">
                 <label htmlFor="post-content" className="text-sm font-bold text-gray-800">
@@ -274,7 +358,7 @@ const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
               />
             </div>
 
-            {/* Cover Image Description */}
+            {/* Cover Image Description Input */}
             <div>
               <label htmlFor="cover-desc" className="block text-sm font-bold text-gray-800 mb-2">
                 Cover Image Description
@@ -289,7 +373,7 @@ const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
               />
             </div>
 
-            {/* Tags */}
+            {/* Tags Input Section */}
             <div>
               <label className="block text-sm font-bold text-gray-800 mb-2">
                 Tags <span className="text-gray-400 font-normal">(up to 5)</span>
@@ -313,7 +397,7 @@ const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
                 </button>
               </div>
 
-              {/* Tag Pills */}
+              {/* Tags Pills List */}
               <div className="flex flex-wrap gap-2">
                 {tags.map((tag) => (
                   <span
@@ -333,17 +417,16 @@ const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
               </div>
             </div>
 
-            {/* Bottom Actions */}
+            {/* Bottom Form Action Buttons */}
             <div className="flex items-center gap-3 border-t pt-6 mt-10">
               <button
                 type="button"
                 onClick={handlePublish}
                 disabled={!isFormValid}
-                className={`px-6 py-2.5 rounded-lg text-sm font-semibold text-white shadow-sm transition cursor-pointer ${
-                  isFormValid 
-                    ? 'bg-violet-600 hover:bg-violet-700' 
+                className={`px-6 py-2.5 rounded-lg text-sm font-semibold text-white shadow-sm transition cursor-pointer ${isFormValid
+                    ? 'bg-violet-600 hover:bg-violet-700'
                     : 'bg-indigo-300 cursor-not-allowed'
-                }`}
+                  }`}
               >
                 {id ? 'Save Changes' : 'Publish Post'}
               </button>
@@ -361,21 +444,21 @@ const CreatePost = ({ handleCreatePost, handleEditPost, posts = [] }) => {
         {/* --- PREVIEW MODE --- */}
         {isPreviewMode && (
           <div className="space-y-6">
-            
+
             {/* Title Preview */}
-            <h1 className={`text-4xl font-extrabold tracking-tight ${title ? 'text-gray-900' : 'text-gray-400'}`}>
+            <h1 className={`text-3xl sm:text-4xl font-extrabold tracking-tight ${title ? 'text-gray-900' : 'text-gray-400'}`}>
               {title || "Post title will appear here"}
             </h1>
 
             {/* Excerpt Preview */}
             <div className="border-l-4 border-violet-200 pl-4 py-1 italic">
-              <p className={`text-lg ${excerpt ? 'text-gray-600' : 'text-gray-400'}`}>
+              <p className={`text-base sm:text-lg ${excerpt ? 'text-gray-600' : 'text-gray-400'}`}>
                 {excerpt || "Excerpt will appear here"}
               </p>
             </div>
 
             {/* Image Box Preview */}
-            <div className="w-full h-[400px] rounded-2xl bg-gray-100 border border-gray-200 flex items-center justify-center text-center p-6 relative overflow-hidden select-none">
+            <div className="w-full h-56 sm:h-96 rounded-2xl bg-gray-100 border border-gray-200 flex items-center justify-center text-center p-6 relative overflow-hidden select-none">
               {coverImageDesc ? (
                 <div className="flex flex-col items-center gap-2">
                   <div className="w-16 h-16 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center font-bold mb-2">
